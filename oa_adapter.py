@@ -417,6 +417,14 @@ def run_adapter(ats: str, slug: str) -> tuple:
     except Exception as e:
         return (ats, slug, [], f'{type(e).__name__}: {e}')
 
+def _iso_utc(ts: str) -> str:
+    try:
+        d = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+    except ValueError:
+        return ''
+    if d.tzinfo is None: d = d.replace(tzinfo=timezone.utc)
+    return d.astimezone(timezone.utc).isoformat()
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--slug-dir', default='slugs', help='dir with cc_{ats}_FINAL.txt files')
@@ -428,9 +436,14 @@ def main():
     ap.add_argument('--full-boards', action='store_true',
                     help='keep every Workday/SmartRecruiters posting (for the published dataset); '
                          'details only for postings from the last FULL_BOARDS_DETAIL_DAYS days')
+    ap.add_argument('--max-age-days', type=int, default=0,
+                    help='keep only postings with posted_at within the last N days (0=no filter)')
     args = ap.parse_args()
-    global FULL_BOARDS
+    global FULL_BOARDS, WORKDAY_MAX_AGE, SMARTRECRUITERS_MAX_AGE
     FULL_BOARDS = args.full_boards
+    if args.max_age_days:
+        WORKDAY_MAX_AGE = SMARTRECRUITERS_MAX_AGE = args.max_age_days
+    cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=args.max_age_days)).isoformat() if args.max_age_days else None
 
     tasks = []
     for ats in args.ats.split(','):
@@ -460,6 +473,7 @@ def main():
             else:
                 ok += 1; by_ats[ats]['tenants_ok'] += 1
                 for jp in jobs:
+                    if cutoff_iso and not (jp.posted_at and _iso_utc(jp.posted_at) >= cutoff_iso): continue
                     out_f.write(json.dumps(asdict(jp)) + '\n')
                     jobs_total += 1
                     by_ats[ats]['jobs'] += 1
